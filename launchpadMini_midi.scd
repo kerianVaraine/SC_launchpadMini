@@ -21,6 +21,8 @@ m = MKtl('LPmini', "novation-launchpadMini");
 
 // Toggle Grid Array, 8 pages of 64 pads, plus 1 page of all 0s for page off.
 ~toggleGridArray = Array.fill2D(9, 64, 0);
+//Array to hold synths whose gate has been turned off, making room for new synths in same spot of toggleGridArray...
+~releasingSynths = [];
 
 // Top button State array.
 ~topButtonArray = [1,0,0,0,0,0,0,0];
@@ -170,10 +172,12 @@ n.free;
 ~togglePad = {
 	arg x, y;
 	var index = x + (y * 8), state;
+	{if(~currentTogglePage != 8)
 	{ if( ~toggleGridArray[~currentTogglePage][index] != 0) {state = 0} {state = 1};
 		~toggleGridArray[~currentTogglePage].put(index, state);
 		m.elAt( \pad, y,x, \on ).do(_.value_(state*(2/127)));
 	};
+};
 };
 
 // Go through all of toggleGridArray send each index to ~togglePlayNote
@@ -185,18 +189,38 @@ n.free;
 	});
 };
 
-// if state of pad == 1, then play note, if note is already playing, so do nothing, if state == 0 and synth existed then syth gate = 0, and turn array index back to nil.
-//THIS CAUSES PROBLEMS! when trying to play same note before it's been set to nill, it just doesn't work.
+// if state of pad == 1, then play note, if note is already playing, so do nothing, if state == 0 and synth existed then syth gate = 0, send synth to synthReleaseGraveyard and turn array index back to nil.
 ~togglePlayNote = {
 	arg index, state;
 	var note = ~keyboardNoteArray[index];
 	switch(state)
 	{1} {	if(~toggleSynthGridArray[index] == nil) {
 		~toggleSynthGridArray.put(index,
-			Synth(\toggleSynth, [ pitch: note ]).onFree({ ~toggleSynthGridArray[index] = nil });
-			);}}
-	{0} { if(~toggleSynthGridArray[index] != nil) {~toggleSynthGridArray.at(index).set(\gate, 0); }}
+			// Synth(\toggleSynth, [ pitch: note ]).onFree({ ~toggleSynthGridArray[index] = nil });
+			Synth(\toggleSynth, [ pitch: note ]);
+
+	);}}
+
+	{0} { if(~toggleSynthGridArray[index] != nil) {
+		~toggleSynthGridArray.at(index).set(\gate, 0); // start release of envelope
+
+				s.makeBundle(nil, {
+			~releasingSynths.add(~toggleSynthGridArray[index]); //put synth into synth graveyard array
+			~toggleSynthGridArray[index] = nil; // set index to nil in toggleSynthArray.... obviously?
+		});
+	}
+	}
+
 };
+
+
+/// Top button related...
+~setTopButtonPageLed = {
+	8.do{|x|
+		if( x == ~currentTogglePage) { m.elAt(\top,x).value_(1); } { m.elAt(\top,x).value_(0); }
+ };
+};
+
 
 ~topButtonAction = {
 	arg togglePage, val;
@@ -207,18 +231,16 @@ n.free;
 
 		//if same page number is pressed again, load blank toggle page array @ index[8], other wise, change to new page.
 	  if(~currentTogglePage == togglePage)
-	    { ~currentTogglePage = 8;
-		  "toggleNothingPage".postln;
-	  }
+	    { ~currentTogglePage = 8;	  } //toggle page of nothingness.
 	  { ~currentTogglePage = togglePage; };
+		//set top button led state...
+				~setTopButtonPageLed.value;
 	//reset toggleGridLeds
 		  ~checkAllLedStates.("toggle").value;
 	//then playAllTogglePads.
 	  ~playAllToggledPads.value;
 };
 };
-
-
 
 ///////// Extra Useful Toggle Related Functions
 
@@ -320,8 +342,16 @@ n.free;
 	~padMode.postln;
 	m.elAt(\side, 0,\on).addAction( {
 		switch(~padMode)
-		{"keyboard"} {~padSetAction.("keyboard"); ~padMode = "toggle";}
-		{"toggle"} {~padSetAction.("toggle"); ~padMode = "keyboard";}
+		{"keyboard"} {
+			~padSetAction.("keyboard"); ~padMode = "toggle";
+						"keyboardMode!".postln;
+			m.elAt(\side, 0,\on).value_(17/127);
+		}
+		{"toggle"} {
+			~padSetAction.("toggle"); ~padMode = "keyboard";
+			"toggleMode!".postln;
+			m.elAt(\side, 0,\on).value_(1/127);
+		}
 })};
 
 
@@ -336,7 +366,7 @@ n.free;
 ///////////////////////////
 //These next two should be set to default on load:
 ~topSetAction.("toggle"); //BUG: if synth hasn't FULLY finnished its released, it will not get retriggered on page change... Work it out, but OK for now, just be slow in page changes.
-~sideSetAction.value; //toggle between modes.
+~sideSetAction.value; //toggle betweenmodes.
 
 
 
@@ -354,6 +384,11 @@ m.reload;
 ////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////
 
+~releasingSynths
+~toggleSynthGridArray
+
+
+s.makeBundle
 
 ///// Reset Actions On Pads for Pad Mode Switching
 
