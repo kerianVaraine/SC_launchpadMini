@@ -1,26 +1,26 @@
-s.reboot;
-//MKtl.find( 'midi' ); //find it
-// Use Desc file
-////////////////
-// m is midicontroller
-///////////////
-m = MKtl('LPmini', "novation-launchpadMini");
-m.reload; // reset after changes to description file
-// open Gui
-m.gui
-//list out all elements, good to check groupings...
-m.postElements
-// top left pad == k.elAt(\pad, 0, 0);
+/////////////////////////////////////////////
+// Install Dependencies:
+// Modaility toolkit for mapping controller
+// Quarks.install("Modality-toolkit");
 
+// Mutable Instruments UGens for basic sound design, follow install instructions:
+// https://github.com/v7b1/mi-UGens
+
+/////////////////////////////////////////////
+
+// First block initialises controller, global arrays & variables
+(
 m = MKtl('LPmini', "novation-launchpadMini");
 
 //Global 8x8 pad mode, "keyboard", "toggle", only availasble.
 ~padMode ="keyboard";
+
 // Grid pad state array, 0-1
 ~gridArray = Array.fill(64,{0});
 
 // Toggle Grid Array, 8 pages of 64 pads, plus 1 page of all 0s for page off.
 ~toggleGridArray = Array.fill2D(9, 64, 0);
+
 //Array to hold synths whose gate has been turned off, making room for new synths in same spot of toggleGridArray...
 ~releasingSynths = [];
 
@@ -30,33 +30,37 @@ m = MKtl('LPmini', "novation-launchpadMini");
 
 
 // Note Lookup for keyboard mode.
+// TODO: make this array generation nicer, or more modular for different layouts
 ~keyboardNoteArray = Array.fill(64, 0);
-(
-// midi note scale generation for pads...
-// take first note of top row(67 here), 35 notes below that is bottom left pad midinote(32 here).
-// makes standard isomorphic wiki hayden layout for square pads, so not wiki-hayden layout at all.
-// major seconds across, 4ths above.
-var note, index;
-(7..0).do{|y|
-	8.do{|x|
-		index = x + (y*8);
-		note = 77 + (x*2) - (y*5);
-		 ~keyboardNoteArray.put(index, note);
-		// [x,y, index, note].postln;
+~defineKeyboardNoteArray = {
+	// midi note scale generation for pads...
+	// take first note of top row(67 here), 35 notes below that is bottom left pad midinote(32 here).
+	// makes standard isomorphic wiki hayden layout for square pads, so not wiki-hayden layout at all.
+	// major seconds across, 4ths above.
+	var note, index;
+	(7..0).do{|y|
+		8.do{|x|
+			index = x + (y*8);
+			note = 77 + (x*2) - (y*5);
+			~keyboardNoteArray.put(index, note);
+			// [x,y, index, note].postln;
+		};
 	};
 };
-)
+~defineKeyboardNoteArray.value;
 
 //Make array for synth voices, 64 for now, as not messing with octave changes just yet;
 ~synthGridArray = nil ! 64;
+
 // do the same for toggleSynthGridArray to hold toggled synths and not get in the way of keyboard mode.
 ~toggleSynthGridArray = nil !64
+)
 
 
-
-// and a verrrrrry simple synth to start with...
-s.boot;
+// Second block initialise a verrrrrry simple synth to start with...
 (
+s.waitForBoot;
+
 SynthDef.new(\tone,{var sig;
 	var vib = SinOsc.kr(0.1).bipolar(1);
 	var env = EnvGen.kr(
@@ -80,7 +84,7 @@ SynthDef.new(\toggleSynth,{
 	var pitch=60;
 	var bpm = 30/60;
 	// var trig = Impulse.kr(bpm);
-    var color = LFNoise0.kr(3, 0 ,0.7);
+	var color = LFNoise0.kr(3, 0 ,0.7);
 	var vib = SinOsc.kr(0.1).bipolar(1);
 	var timb = LFNoise0.kr(3, 0 ,0.7);
 	var env = EnvGen.kr(
@@ -101,6 +105,7 @@ SynthDef.new(\toggleSynth,{
 )
 
 
+/////////////////////////////////////////////
 //test synths.
 x = Synth(\tone, [pitch: 70, color:0.2, timb:0.9]);
 x.set(\gate, 0);
@@ -110,7 +115,11 @@ n.set(\timb, 0.1)
 n.set(\color, LFNoise0.kr(20, 0 ,0.7));
 n.set(\gate, 0);
 n.free;
-// Functions declarations for pads modality actions, and control types
+/////////////////////////////////////////////
+
+// Main block does all the things.
+// Functions declarations for pads modality actions, and control types.
+// Inits default keyboard mode for pads, with 'A' button switching modes, and top row of numbered buttons holding pages of toggled notes.
 (
 //////// General Functions
 ~printVal = { |el| [el.name, el.value].postln };
@@ -162,7 +171,7 @@ n.free;
 //Top Button Reset actions
 ~topButtonReset = {
 	8.do{|x|
-			m.elAt(\top, x).resetAction;
+		m.elAt(\top, x).resetAction;
 	}
 };
 
@@ -173,11 +182,11 @@ n.free;
 	arg x, y;
 	var index = x + (y * 8), state;
 	{if(~currentTogglePage != 8)
-	{ if( ~toggleGridArray[~currentTogglePage][index] != 0) {state = 0} {state = 1};
-		~toggleGridArray[~currentTogglePage].put(index, state);
-		m.elAt( \pad, y,x, \on ).do(_.value_(state*(2/127)));
+		{ if( ~toggleGridArray[~currentTogglePage][index] != 0) {state = 0} {state = 1};
+			~toggleGridArray[~currentTogglePage].put(index, state);
+			m.elAt( \pad, y,x, \on ).do(_.value_(state*(2/127)));
+		};
 	};
-};
 };
 
 // Go through all of toggleGridArray send each index to ~togglePlayNote
@@ -185,7 +194,7 @@ n.free;
 ~playAllToggledPads = {
 	~toggleGridArray[~currentTogglePage].do({
 		arg state, index;
-				~togglePlayNote.(index, state);
+		~togglePlayNote.(index, state);
 	});
 };
 
@@ -204,7 +213,7 @@ n.free;
 	{0} { if(~toggleSynthGridArray[index] != nil) {
 		~toggleSynthGridArray.at(index).set(\gate, 0); // start release of envelope
 
-				s.makeBundle(nil, {
+		s.makeBundle(nil, {
 			~releasingSynths.add(~toggleSynthGridArray[index]); //put synth into synth graveyard array
 			~toggleSynthGridArray[index] = nil; // set index to nil in toggleSynthArray.... obviously?
 		});
@@ -218,28 +227,28 @@ n.free;
 ~setTopButtonPageLed = {
 	8.do{|x|
 		if( x == ~currentTogglePage) { m.elAt(\top,x).value_(1); } { m.elAt(\top,x).value_(0); }
- };
+	};
 };
 
 
 ~topButtonAction = {
 	arg togglePage, val;
-		// top buttons are midiCC, so anything other than 0 should trigger play.
+	// top buttons are midiCC, so anything other than 0 should trigger play.
 	if(val !=0){
-	//Clear all top button leds
-	//turn on selected one
+		//Clear all top button leds
+		//turn on selected one
 
 		//if same page number is pressed again, load blank toggle page array @ index[8], other wise, change to new page.
-	  if(~currentTogglePage == togglePage)
-	    { ~currentTogglePage = 8;	  } //toggle page of nothingness.
-	  { ~currentTogglePage = togglePage; };
+		if(~currentTogglePage == togglePage)
+		{ ~currentTogglePage = 8;	  } //toggle page of nothingness.
+		{ ~currentTogglePage = togglePage; };
 		//set top button led state...
-				~setTopButtonPageLed.value;
-	//reset toggleGridLeds
-		  ~checkAllLedStates.("toggle").value;
-	//then playAllTogglePads.
-	  ~playAllToggledPads.value;
-};
+		~setTopButtonPageLed.value;
+		//reset toggleGridLeds
+		~checkAllLedStates.("toggle").value;
+		//then playAllTogglePads.
+		~playAllToggledPads.value;
+	};
 };
 
 ///////// Extra Useful Toggle Related Functions
@@ -253,7 +262,7 @@ n.free;
 		m.elAt( \pad, index.div(8),index%8, \on ).do(_.value_(state*(
 			switch(mode)
 			{"toggle"} {2/127} // if toggle mode, then bright red
-		  {"keyboard"} {1/127}))); // if keyboard mode then dull red
+			{"keyboard"} {1/127}))); // if keyboard mode then dull red
 	});
 };
 
@@ -270,16 +279,8 @@ n.free;
 	{0} { ~synthGridArray.at(index).set(\gate, 0); }
 };
 
-////////////////
-// Top Row Button Methods
-////////////////
-
-
 
 ////// Mode Switching, clear existing pad actions and assign new actions to pads depending on mode selected
-
-
-
 ~padSetAction = {
 	arg mode;
 	//reset pad actions
@@ -288,43 +289,45 @@ n.free;
 
 	switch(mode)
 	{ "momentary" } {
-			8.do{|y|
-				8.do{|x|
-					var index = x+(y*8);
-					m.elAt(\pad, y, x, \on).addAction(~ledOn.());
-					m.elAt(\pad, y, x, \on).addAction({~gridArray.put(index,1)});
-					m.elAt(\pad,y, x, \off).addAction(~ledOff.());
-					m.elAt(\pad,y, x, \off).addAction({~gridArray.put(index,0)});
-				}
-			};
-		}
+		8.do{|y|
+			8.do{|x|
+				var index = x+(y*8);
+				m.elAt(\pad, y, x, \on).addAction(~ledOn.());
+				m.elAt(\pad, y, x, \on).addAction({~gridArray.put(index,1)});
+				m.elAt(\pad,y, x, \off).addAction(~ledOff.());
+				m.elAt(\pad,y, x, \off).addAction({~gridArray.put(index,0)});
+			}
+		};
+	}
 	{ "keyboard" } {
-				~checkAllLedStates.(mode).value;
-			8.do{|y|
-				8.do{|x|
-								var index = x+(y*8);
-					m.elAt(\pad, y, x, \on).addAction(~ledOn.(17/127));
-					m.elAt(\pad, y, x, \on).addAction({~gridArray.put(index,1)});
+		~checkAllLedStates.(mode).value;
+		8.do{|y|
+			8.do{|x|
+				var index = x+(y*8);
+				m.elAt(\pad, y, x, \on).addAction(~ledOn.(17/127));
+				m.elAt(\pad, y, x, \on).addAction({~gridArray.put(index,1)});
 				m.elAt(\pad, y, x, \on).addAction({~padKeyboardNote.(index,1)});
 				m.elAt(\pad,y, x, \off).addAction({~ledOffToggleCheck.(x,y,index,mode)});
-					m.elAt(\pad,y, x, \off).addAction({~gridArray.put(index,0)});
+				m.elAt(\pad,y, x, \off).addAction({~gridArray.put(index,0)});
 				m.elAt(\pad, y, x, \off).addAction({~padKeyboardNote.(index,0)});
-				// m.elAt(\pad,y, x, \off).addAction(~ledOff.()); // original, works, but turns off toggled notes...
-				// m.elAt(\pad,y,x,\off).addAction({~checkAllLedStates.(mode).value}); // not ideal...
-				}
-			};
-		}
+			}
+		};
+	}
 	{ "toggle" } {
 		~checkAllLedStates.(mode).value;
 		8.do{ |y|
-				8.do{ |x|
+			8.do{ |x|
 				m.elAt(\pad, y, x, \on).addAction( ~togglePad.(x,y) );
-				}
-			};
+			}
+		};
 	}
 	{
 		"Not valid, currently available modes are: 'momentary' , 'keyboard', 'toggle'".postln;
 }};
+
+///////////////////////////
+// Top Row Button Methods /
+///////////////////////////
 
 ~topSetAction = {
 	arg mode;
@@ -333,18 +336,21 @@ n.free;
 	{"toggle"} {
 		8.do{ |x|
 			m.elAt(\top, x).addAction( {~topButtonAction.(x, m.elAt(\top, x).value.round(0.0001))});
-	}
-	{ } {	"Not valid, currently available modes for top buttons are:'toggle'".postln }};
+		}
+		{ } {	"Not valid, currently available modes for top buttons are:'toggle'".postln }};
 };
 
-~sideSetAction = {
+////////////////////////////
+// Side Row Button Methods /
+////////////////////////////
 
+~sideSetAction = {
 	~padMode.postln;
 	m.elAt(\side, 0,\on).addAction( {
 		switch(~padMode)
 		{"keyboard"} {
 			~padSetAction.("keyboard"); ~padMode = "toggle";
-						"keyboardMode!".postln;
+			"keyboardMode!".postln;
 			m.elAt(\side, 0,\on).value_(17/127);
 		}
 		{"toggle"} {
@@ -355,7 +361,17 @@ n.free;
 })};
 
 
+//////////////////////////////////////
+//Init Controller to keyboard mode  //
+//////////////////////////////////////
+~padSetAction.("keyboard");
+~topSetAction.("toggle");
+~sideSetAction.value;
 )
+
+////////////////////////////
+// Now it should all work! /
+////////////////////////////
 
 
 // main Pad modes.
@@ -363,12 +379,16 @@ n.free;
 ~padSetAction.("keyboard");
 ~padSetAction.("toggle");
 
-///////////////////////////
-//These next two should be set to default on load:
-~topSetAction.("toggle"); //BUG: if synth hasn't FULLY finnished its released, it will not get retriggered on page change... Work it out, but OK for now, just be slow in page changes.
-~sideSetAction.value; //toggle betweenmodes.
+//
+// ///////////////////////////
+// //These next two should be set to default on load:
+~topSetAction.("toggle");
+~sideSetAction.value; //toggle between pad modes with button A.
 
 
+//////////////////////////////
+// random debugs section.... /
+//////////////////////////////
 
 m.reload;
 
@@ -394,8 +414,6 @@ s.makeBundle
 
 ~topButtonReset.value;
 
-//////////////////////////////////////////////
-//debugs
 ~padResetOnAction.value;
 ~padResetOffAction.value;
 
@@ -405,7 +423,7 @@ s.makeBundle
 ~checkLedState.value;
 m.elAt(\pad , 0,1, \on).do(_.value_(1));
 
-	// [~keyboardNoteArray[index], index%8, index.div(8), state].postln;
+// [~keyboardNoteArray[index], index%8, index.div(8), state].postln;
 
 //assign actions to all pads, 8x8
 (
@@ -433,3 +451,22 @@ m.elAt(\pad).do(_.value_(0));
 ~toggleSynthGridArray = nil ! 64;
 
 ~toggleGridArray[0]
+
+
+
+/////////////////////////////
+// Was at top of file, used for initial controller mapping
+// s.reboot;
+// //MKtl.find( 'midi' ); //find it
+// // Use Desc file
+// ////////////////
+// // m is midicontroller
+// ///////////////
+// m = MKtl('LPmini', "novation-launchpadMini");
+// m.reload; // reset after changes to description file
+// // open Gui
+// m.gui
+// //list out all elements, good to check groupings...
+// m.postElements
+// // top left pad == k.elAt(\pad, 0, 0);
+
