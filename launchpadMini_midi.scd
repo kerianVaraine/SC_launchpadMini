@@ -1,4 +1,4 @@
-
+s.reboot;
 //MKtl.find( 'midi' ); //find it
 // Use Desc file
 ////////////////
@@ -13,14 +13,18 @@ m.postElements
 // top left pad == k.elAt(\pad, 0, 0);
 
 m = MKtl('LPmini', "novation-launchpadMini");
+
+//Global 8x8 pad mode, "keyboard", "toggle", only availasble.
+~padMode ="keyboard";
 // Grid pad state array, 0-1
 ~gridArray = Array.fill(64,{0});
 
-// Toggle Grid Array, 64 pads.
-~toggleGridArray = Array.fill(64,{0});
+// Toggle Grid Array, 8 pages of 64 pads, plus 1 page of all 0s for page off.
+~toggleGridArray = Array.fill2D(9, 64, 0);
 
 // Top button State array.
-~topButtonArray = Array.fill(8,{0});
+~topButtonArray = [1,0,0,0,0,0,0,0];
+~currentTogglePage = 0;
 
 
 // Note Lookup for keyboard mode.
@@ -80,7 +84,7 @@ SynthDef.new(\toggleSynth,{
 	var env = EnvGen.kr(
 		Env(
 			[0, 1, 1, 0],
-			[0.2, 0.8, 2],
+			[0.2, 0.8, 1],
 			[-2, -4, -4],
 			2
 		),
@@ -89,7 +93,7 @@ SynthDef.new(\toggleSynth,{
 	);
 	sig = MiBraids.ar(\pitch.kr(60), \timb.kr(0.5), \color.kr(LFNoise0.kr(10, 0 ,0.7)), 29, mul: 0.4) ! 2;
 	sig = sig * env;
-	Out.ar(\out.kr(0), sig *0.5);
+	Out.ar(\out.kr(0), sig *0.8);
 }).add;
 
 )
@@ -129,7 +133,7 @@ n.free;
 	switch(mode)
 	{ "keyboard" } {
 		//check state of toggleGridArray Index, return to dull red if state == 1
-		if(~toggleGridArray[index] == 0) {m.elAt(\pad,y,x,\off).value_(0);} {m.elAt( \pad, y,x, \on ).value_(1/127);};
+		if(~toggleGridArray[~currentTogglePage][index] == 0) {m.elAt(\pad,y,x,\off).value_(0);} {m.elAt( \pad, y,x, \on ).value_(1/127);};
 	}
 	{ "toggle" }
 	{m.elAt(\pad,y,x,\off).value_(0);}
@@ -155,8 +159,10 @@ n.free;
 
 //Top Button Reset actions
 ~topButtonReset = {
-			m.elAt(\top).resetAction;
-		};
+	8.do{|x|
+			m.elAt(\top, x).resetAction;
+	}
+};
 
 
 //////// Toggle Mode Functions Section
@@ -164,23 +170,23 @@ n.free;
 ~togglePad = {
 	arg x, y;
 	var index = x + (y * 8), state;
-	{ if( ~toggleGridArray[index] != 0) {state = 0} {state = 1};
-		~toggleGridArray.put(index, state);
+	{ if( ~toggleGridArray[~currentTogglePage][index] != 0) {state = 0} {state = 1};
+		~toggleGridArray[~currentTogglePage].put(index, state);
 		m.elAt( \pad, y,x, \on ).do(_.value_(state*(2/127)));
-
 	};
 };
 
 // Go through all of toggleGridArray send each index to ~togglePlayNote
 // This is its own function, as there will be use for this in sequencer mode, checking toggles by column...
 ~playAllToggledPads = {
-	~toggleGridArray.do({
+	~toggleGridArray[~currentTogglePage].do({
 		arg state, index;
 				~togglePlayNote.(index, state);
 	});
 };
 
 // if state of pad == 1, then play note, if note is already playing, so do nothing, if state == 0 and synth existed then syth gate = 0, and turn array index back to nil.
+//THIS CAUSES PROBLEMS! when trying to play same note before it's been set to nill, it just doesn't work.
 ~togglePlayNote = {
 	arg index, state;
 	var note = ~keyboardNoteArray[index];
@@ -188,15 +194,28 @@ n.free;
 	{1} {	if(~toggleSynthGridArray[index] == nil) {
 		~toggleSynthGridArray.put(index,
 			Synth(\toggleSynth, [ pitch: note ]).onFree({ ~toggleSynthGridArray[index] = nil });
-);
-	}}
+			);}}
 	{0} { if(~toggleSynthGridArray[index] != nil) {~toggleSynthGridArray.at(index).set(\gate, 0); }}
 };
 
-
 ~topButtonAction = {
-	arg togglePage;
-	~playAllToggledPads.();
+	arg togglePage, val;
+		// top buttons are midiCC, so anything other than 0 should trigger play.
+	if(val !=0){
+	//Clear all top button leds
+	//turn on selected one
+
+		//if same page number is pressed again, load blank toggle page array @ index[8], other wise, change to new page.
+	  if(~currentTogglePage == togglePage)
+	    { ~currentTogglePage = 8;
+		  "toggleNothingPage".postln;
+	  }
+	  { ~currentTogglePage = togglePage; };
+	//reset toggleGridLeds
+		  ~checkAllLedStates.("toggle").value;
+	//then playAllTogglePads.
+	  ~playAllToggledPads.value;
+};
 };
 
 
@@ -207,7 +226,7 @@ n.free;
 // Called at beginning of keyboard mode to keep toggled notes lit up in a less intense red.
 ~checkAllLedStates = {
 	arg mode;
-	~toggleGridArray.do({
+	~toggleGridArray[~currentTogglePage].do({
 		arg state, index;
 		m.elAt( \pad, index.div(8),index%8, \on ).do(_.value_(state*(
 			switch(mode)
@@ -287,13 +306,25 @@ n.free;
 
 ~topSetAction = {
 	arg mode;
+	~topButtonReset.value;
 	switch(mode)
 	{"toggle"} {
 		8.do{ |x|
-			m.elAt(\top, x).addAction( ~topButtonAction);
+			m.elAt(\top, x).addAction( {~topButtonAction.(x, m.elAt(\top, x).value.round(0.0001))});
 	}
 	{ } {	"Not valid, currently available modes for top buttons are:'toggle'".postln }};
-}
+};
+
+~sideSetAction = {
+
+	~padMode.postln;
+	m.elAt(\side, 0,\on).addAction( {
+		switch(~padMode)
+		{"keyboard"} {~padSetAction.("keyboard"); ~padMode = "toggle";}
+		{"toggle"} {~padSetAction.("toggle"); ~padMode = "keyboard";}
+})};
+
+
 )
 
 
@@ -302,13 +333,19 @@ n.free;
 ~padSetAction.("keyboard");
 ~padSetAction.("toggle");
 
-~topSetAction.("toggle");
+///////////////////////////
+//These next two should be set to default on load:
+~topSetAction.("toggle"); //BUG: if synth hasn't FULLY finnished its released, it will not get retriggered on page change... Work it out, but OK for now, just be slow in page changes.
+~sideSetAction.value; //toggle between modes.
 
+
+
+m.reload;
 
 //could be put on timer, or on execution button... independent of what mode you are currently in.
 ~playAllToggledPads.value;
 
-~checkAllLedStates.("keyboard").value;
+~checkAllLedStates.("toggle").value;
 
 
 
@@ -320,12 +357,8 @@ n.free;
 
 ///// Reset Actions On Pads for Pad Mode Switching
 
-~topButtonReset;
+~topButtonReset.value;
 
-~tArr = Array.fill(8,(0..64));
-~tArr[0][5]
-
-(0..64)
 //////////////////////////////////////////////
 //debugs
 ~padResetOnAction.value;
@@ -363,3 +396,5 @@ m.elAt(\pad).do(_.value_(0));
 ~toggleSynthGridArray
 ~synthGridArray = nil ! 64; //reset synthArray
 ~toggleSynthGridArray = nil ! 64;
+
+~toggleGridArray[0]
