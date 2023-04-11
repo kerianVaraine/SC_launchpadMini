@@ -53,7 +53,11 @@ m = MKtl('LPmini', "novation-launchpadMini");
 ~synthGridArray = nil ! 64;
 
 // do the same for toggleSynthGridArray to hold toggled synths and not get in the way of keyboard mode.
-~toggleSynthGridArray = nil !64
+~toggleSynthGridArray = nil !64;
+
+//Toggle Sequencer vars
+~playPosition = 0;
+~playState = 0;
 )
 
 
@@ -99,7 +103,7 @@ SynthDef.new(\toggleSynth,{
 	);
 	sig = MiBraids.ar(\pitch.kr(60), \timb.kr(0.5), \color.kr(LFNoise0.kr(10, 0 ,0.7)), 29, mul: 0.4) ! 2;
 	sig = sig * env;
-	Out.ar(\out.kr(0), sig *0.8);
+	Out.ar(\out.kr(0), sig);
 }).add;
 
 )
@@ -175,6 +179,19 @@ n.free;
 	}
 };
 
+/////////////////////////////////
+/////// Keyboard Mode Functions
+~padKeyboardNote = {
+	arg index, state;
+	// [~keyboardNoteArray[index], index%8, index.div(8), state].postln;
+	var note = ~keyboardNoteArray[index];
+	//Take note, make synth, chuck in array on state == 1, gate off on state == 0;
+	switch(state)
+	{1} {	~synthGridArray.put(index, Synth(\tone,
+		[pitch: note, color:0.2, timb:0.9] ));
+	}
+	{0} { ~synthGridArray.at(index).set(\gate, 0); }
+};
 
 //////// Toggle Mode Functions Section
 
@@ -212,7 +229,7 @@ n.free;
 
 	{0} { if(~toggleSynthGridArray[index] != nil) {
 		~toggleSynthGridArray.at(index).set(\gate, 0); // start release of envelope
-
+		//make bundle sends message at same time in explicit order given
 		s.makeBundle(nil, {
 			~releasingSynths.add(~toggleSynthGridArray[index]); //put synth into synth graveyard array
 			~toggleSynthGridArray[index] = nil; // set index to nil in toggleSynthArray.... obviously?
@@ -246,6 +263,8 @@ n.free;
 		~setTopButtonPageLed.value;
 		//reset toggleGridLeds
 		~checkAllLedStates.("toggle").value;
+		// Set play position for sequence tests
+		~playPosition = ~currentTogglePage;
 		//then playAllTogglePads.
 		~playAllToggledPads.value;
 	};
@@ -259,24 +278,32 @@ n.free;
 	arg mode;
 	~toggleGridArray[~currentTogglePage].do({
 		arg state, index;
+
 		m.elAt( \pad, index.div(8),index%8, \on ).do(_.value_(state*(
 			switch(mode)
 			{"toggle"} {2/127} // if toggle mode, then bright red
 			{"keyboard"} {1/127}))); // if keyboard mode then dull red
+		// Check if keyboard note is being played, if so turn led back to keyboard colour.
+		if ( ~gridArray[index] == 1 ) {	m.elAt( \pad, index.div(8), index%8, \on).do(_.value_(17/127))};
+
 	});
 };
 
-/////// Keyboard Mode Functions
-~padKeyboardNote = {
-	arg index, state;
-	// [~keyboardNoteArray[index], index%8, index.div(8), state].postln;
-	var note = ~keyboardNoteArray[index];
-	//Take note, make synth, chuck in array on state == 1, gate off on state == 0;
-	switch(state)
-	{1} {	~synthGridArray.put(index, Synth(\tone,
-		[pitch: note, color:0.2, timb:0.9] ));
+/////////////////////
+// Toggle Pages Sequencer
+// Task for running through togglePages via ~topButtonAction.... not ideal, but works?
+~toggleSeq = Task({
+	var interval = 0.25; // here is tempo...
+	loop {
+		~playPosition = (~playPosition + 1).wrap(0,7);
+		~topButtonAction.(~playPosition);
+		interval.wait;
 	}
-	{0} { ~synthGridArray.at(index).set(\gate, 0); }
+});
+
+// Button action
+~playToggleSeq = {
+	if(~playState==0) { ~toggleSeq.play; ~playState = 1;} { ~toggleSeq.stop; ~playState = 0;};
 };
 
 
@@ -320,6 +347,7 @@ n.free;
 				m.elAt(\pad, y, x, \on).addAction( ~togglePad.(x,y) );
 			}
 		};
+		~setTopButtonPageLed.value;
 	}
 	{
 		"Not valid, currently available modes are: 'momentary' , 'keyboard', 'toggle'".postln;
@@ -345,7 +373,8 @@ n.free;
 ////////////////////////////
 
 ~sideSetAction = {
-	~padMode.postln;
+	["Now in " ,~padMode].postln;
+	m.elAt(\side, 0,\on).resetAction;
 	m.elAt(\side, 0,\on).addAction( {
 		switch(~padMode)
 		{"keyboard"} {
@@ -357,15 +386,22 @@ n.free;
 			~padSetAction.("toggle"); ~padMode = "keyboard";
 			"toggleMode!".postln;
 			m.elAt(\side, 0,\on).value_(1/127);
-		}
+		};
+
+		//Play toggle Pages with H
+		m.elAt(\side, 7,\on).resetAction;
+		//Play Action on H Button:
+		m.elAt(\side, 7,\on).addAction( {~playToggleSeq.value});
 })};
 
 
 //////////////////////////////////////
 //Init Controller to keyboard mode  //
 //////////////////////////////////////
+
 ~padSetAction.("keyboard");
 ~topSetAction.("toggle");
+~padMode = "keyboard";
 ~sideSetAction.value;
 )
 
@@ -373,17 +409,10 @@ n.free;
 // Now it should all work! /
 ////////////////////////////
 
-
 // main Pad modes.
 ~padSetAction.("momentary"); // does nothing but light up and turn off when pressed and released. woooooooohooooo
 ~padSetAction.("keyboard");
 ~padSetAction.("toggle");
-
-//
-// ///////////////////////////
-// //These next two should be set to default on load:
-~topSetAction.("toggle");
-~sideSetAction.value; //toggle between pad modes with button A.
 
 
 //////////////////////////////
@@ -421,7 +450,7 @@ s.makeBundle
 
 
 ~checkLedState.value;
-m.elAt(\pad , 0,1, \on).do(_.value_(1));
+
 
 // [~keyboardNoteArray[index], index%8, index.div(8), state].postln;
 
@@ -467,6 +496,6 @@ m.elAt(\pad).do(_.value_(0));
 // // open Gui
 // m.gui
 // //list out all elements, good to check groupings...
-// m.postElements
+ m.postElements
 // // top left pad == k.elAt(\pad, 0, 0);
 
