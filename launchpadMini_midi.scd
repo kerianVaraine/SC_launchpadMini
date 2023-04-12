@@ -12,8 +12,9 @@
 (
 m = MKtl('LPmini', "novation-launchpadMini");
 
-//Global 8x8 pad mode, "keyboard", "toggle", only availasble.
-~padMode ="keyboard";
+//Global 8x8 pad mode, "keyboard", "toggle", "sequencer" only availasble.
+~padMode ="keyboard"; //current mode
+~nextPadMode = "keyboard"; // next mode, inits to same...
 
 // Grid pad state array, 0-1
 ~gridArray = Array.fill(64,{0});
@@ -27,7 +28,6 @@ m = MKtl('LPmini', "novation-launchpadMini");
 // Top button State array.
 ~topButtonArray = [1,0,0,0,0,0,0,0];
 ~currentTogglePage = 0;
-
 
 // Note Lookup for keyboard mode.
 // TODO: make this array generation nicer, or more modular for different layouts
@@ -58,6 +58,14 @@ m = MKtl('LPmini', "novation-launchpadMini");
 //Toggle Sequencer vars
 ~playPosition = 0;
 ~playState = 0;
+
+// 64 pad array for sequenced togglePages... song mode?
+// takes togglePageNumber as arg, 8 is blank
+// light them up dullest yellow for playback, 16/127
+//array filled with blank toggle page number.
+~sequencerArray = Array.fill(64,8);
+
+
 )
 
 
@@ -255,18 +263,26 @@ n.free;
 		//Clear all top button leds
 		//turn on selected one
 
-		//if same page number is pressed again, load blank toggle page array @ index[8], other wise, change to new page.
-		if(~currentTogglePage == togglePage)
-		{ ~currentTogglePage = 8;	  } //toggle page of nothingness.
+
+		switch(~playState)
+				//if same page number is pressed again, load blank toggle page array @ index[8], other wise, change to new page.
+		{0} {if(~currentTogglePage == togglePage)
+		{ ~currentTogglePage = 8;	} //toggle page of nothingness.
 		{ ~currentTogglePage = togglePage; };
+		}
+		    //if playing sequences, hold onto page.
+		{1} { ~currentTogglePage = togglePage; };
+
 		//set top button led state...
 		~setTopButtonPageLed.value;
 		//reset toggleGridLeds
 		~checkAllLedStates.("toggle").value;
-		// Set play position for sequence tests
-		~playPosition = ~currentTogglePage;
+		// Set play position for sequence tests along top row... out for sequencer mode
+		// ~playPosition = ~currentTogglePage;
 		//then playAllTogglePads.
 		~playAllToggledPads.value;
+		//
+
 	};
 };
 
@@ -282,21 +298,52 @@ n.free;
 		m.elAt( \pad, index.div(8),index%8, \on ).do(_.value_(state*(
 			switch(mode)
 			{"toggle"} {2/127} // if toggle mode, then bright red
-			{"keyboard"} {1/127}))); // if keyboard mode then dull red
+			{"keyboard"} {1/127}
+		{"sequencer"} {0/127};))); // if keyboard or sequencer mode then dull red
 		// Check if keyboard note is being played, if so turn led back to keyboard colour.
 		if ( ~gridArray[index] == 1 ) {	m.elAt( \pad, index.div(8), index%8, \on).do(_.value_(17/127))};
-
 	});
 };
+
+////////////////////////////////////////////
+//////// Sequencer Mode Functions Section //
+
+~sequencePadUpdateLed = {
+	var state, pageHighlight;
+		//do.array, set leds...
+	if( ~padMode == "sequencer" ) {
+		~sequencerArray.do(
+			{arg item, index;
+		switch(item)
+			{8} {state = 0; pageHighlight = 0;}
+			{~currentTogglePage} {state = 1; pageHighlight = 6;}
+		//default
+			{state = 1; pageHighlight = 0;};
+
+				m.elAt( \pad, index.div(8),index%8, \on ).do(_.value_(state*((17+ pageHighlight)/127) ));
+		});
+	};
+};
+
+~sequencerPad = {
+	arg x, y;
+	var index = x+(y*8);
+	{ ~sequencerArray.put(index, if(~sequencerArray[index] == ~currentTogglePage) {8;}{~currentTogglePage;}; );
+		~sequencePadUpdateLed.value;
+	};
+};
+
+
 
 /////////////////////
 // Toggle Pages Sequencer
 // Task for running through togglePages via ~topButtonAction.... not ideal, but works?
 ~toggleSeq = Task({
-	var interval = 0.25; // here is tempo...
+	var interval = 0.10; // here is tempo...
 	loop {
-		~playPosition = (~playPosition + 1).wrap(0,7);
-		~topButtonAction.(~playPosition);
+		~playPosition = (~playPosition + 1).wrap(0,63);
+		~topButtonAction.(~sequencerArray[~playPosition]);
+		m.elAt( \pad, ~playPosition.div(8),~playPosition%8, \on ).do(_.value_(18/127)); //plackback Marker show.
 		interval.wait;
 	}
 });
@@ -305,6 +352,8 @@ n.free;
 ~playToggleSeq = {
 	if(~playState==0) { ~toggleSeq.play; ~playState = 1;} { ~toggleSeq.stop; ~playState = 0;};
 };
+
+
 
 
 ////// Mode Switching, clear existing pad actions and assign new actions to pads depending on mode selected
@@ -349,6 +398,14 @@ n.free;
 		};
 		~setTopButtonPageLed.value;
 	}
+	{ "sequencer" } {
+				~checkAllLedStates.(mode).value;
+					8.do{ |y|
+			8.do{ |x|
+				m.elAt(\pad, y, x, \on).addAction( ~sequencerPad.(x,y) );
+			}
+		};
+	}
 	{
 		"Not valid, currently available modes are: 'momentary' , 'keyboard', 'toggle'".postln;
 }};
@@ -364,6 +421,7 @@ n.free;
 	{"toggle"} {
 		8.do{ |x|
 			m.elAt(\top, x).addAction( {~topButtonAction.(x, m.elAt(\top, x).value.round(0.0001))});
+			m.elAt(\top,x).addAction( {~sequencePadUpdateLed.value; } );
 		}
 		{ } {	"Not valid, currently available modes for top buttons are:'toggle'".postln }};
 };
@@ -373,25 +431,34 @@ n.free;
 ////////////////////////////
 
 ~sideSetAction = {
-	["Now in " ,~padMode].postln;
 	m.elAt(\side, 0,\on).resetAction;
+
 	m.elAt(\side, 0,\on).addAction( {
-		switch(~padMode)
+		~padMode = ~nextPadMode.value;
+		switch(~nextPadMode)
 		{"keyboard"} {
-			~padSetAction.("keyboard"); ~padMode = "toggle";
+			~padSetAction.("keyboard"); ~nextPadMode = "toggle";
 			"keyboardMode!".postln;
 			m.elAt(\side, 0,\on).value_(17/127);
 		}
 		{"toggle"} {
-			~padSetAction.("toggle"); ~padMode = "keyboard";
+			~padSetAction.("toggle"); ~nextPadMode = "sequencer";
 			"toggleMode!".postln;
-			m.elAt(\side, 0,\on).value_(1/127);
+			m.elAt(\side, 0,\on).value_(3/127);
+		}
+		{"sequencer"} {
+			~padSetAction.("sequencer");  ~nextPadMode = "keyboard";
+			"sequencerMode!".postln;
+		m.elAt(\side, 0,\on).value_(16/127);
+			~sequencePadUpdateLed.value;
 		};
 
 		//Play toggle Pages with H
 		m.elAt(\side, 7,\on).resetAction;
 		//Play Action on H Button:
 		m.elAt(\side, 7,\on).addAction( {~playToggleSeq.value});
+
+		~padMode.postln;
 })};
 
 
@@ -418,6 +485,29 @@ n.free;
 //////////////////////////////
 // random debugs section.... /
 //////////////////////////////
+
+
+//sequencer messing
+
+//in sequencer mode
+~sequencerArray;
+
+
+
+/*
+~togglePad = {
+	arg x, y;
+	var index = x + (y * 8), state;
+	{if(~currentTogglePage != 8)
+		{ if( ~toggleGridArray[~currentTogglePage][index] != 0) {state = 0} {state = 1};
+			~toggleGridArray[~currentTogglePage].put(index, state);
+			m.elAt( \pad, y,x, \on ).do(_.value_(state*(2/127)));
+		};
+	};
+};*/
+
+
+
 
 m.reload;
 
@@ -459,7 +549,7 @@ s.makeBundle
 8.do{|y|
 	8.do{|x|
 
-		m.elAt(\pad, y, x, \on).addAction(~ledOn.((x+(y*8))/127));
+		m.elAt(\pad, y, x, \on).addAction(~ledOn.((x+(y*16))/127));
 		// m.elAt(\pad, y, x, \on).addAction({~gridArray.put(x+(y*8),1)});
 		// m.elAt(\pad,y, x, \off).addAction(~ledOff.());
 		// m.elAt(\pad,y, x, \off).addAction({~gridArray.put(x+(y*8),0)});
@@ -479,7 +569,7 @@ m.elAt(\pad).do(_.value_(0));
 ~synthGridArray = nil ! 64; //reset synthArray
 ~toggleSynthGridArray = nil ! 64;
 
-~toggleGridArray[0]
+~toggleGridArray
 
 
 
