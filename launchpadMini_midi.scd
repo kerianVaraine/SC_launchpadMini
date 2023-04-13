@@ -78,7 +78,7 @@ SynthDef.new(\tone,{var sig;
 	var env = EnvGen.kr(
 		Env(
 			[0, 1, 1, 0],
-			[0, 0.8, 2],
+			[0, 0.8, 1],
 			[-2, -4, -4],
 			2
 		),
@@ -95,10 +95,10 @@ SynthDef.new(\toggleSynth,{
 	var sig;
 	var pitch=60;
 	var bpm = 30/60;
-	// var trig = Impulse.kr(bpm);
-	var color = LFNoise0.kr(3, 0 ,0.7);
-	var vib = SinOsc.kr(0.1).bipolar(1);
-	var timb = LFNoise0.kr(3, 0 ,0.7);
+	var panVal = SinOsc.kr(LFNoise1.kr(3,1),Prand([0,0.25,0.5,0.75],inf).asStream).linlin(-1.0,1.0,-0.7,0.7);
+	var color = SinOsc.kr(LFNoise1.kr(5,0.5,0)).unipolar(1);
+	var vib = SinOsc.kr(3).bipolar(0.1);
+	var timb = SinOsc.kr(0.25,0.5).linlin(-1,1,0.8,1);
 	var env = EnvGen.kr(
 		Env(
 			[0, 1, 1, 0],
@@ -109,24 +109,33 @@ SynthDef.new(\toggleSynth,{
 		\gate.kr(1),
 		doneAction: 2
 	);
-	sig = MiBraids.ar(\pitch.kr(60), \timb.kr(0.5), \color.kr(LFNoise0.kr(10, 0 ,0.7)), 29, mul: 0.4) ! 2;
+	sig = MiBraids.ar(\pitch.kr(60) + vib, timb, color, model:31, mul: 0.2);
 	sig = sig * env;
-	Out.ar(\out.kr(0), sig);
+		Out.ar(\out.kr(0), Pan2.ar(sig, panVal));
 }).add;
 
 )
-
+Pan2
 
 /////////////////////////////////////////////
-//test synths.
+//test simple synths.
 x = Synth(\tone, [pitch: 70, color:0.2, timb:0.9]);
 x.set(\gate, 0);
 
 n = Synth(\toggleSynth, [pitch:60]);
-n.set(\timb, 0.1)
-n.set(\color, LFNoise0.kr(20, 0 ,0.7));
+n.set(\timb, 0.9)
+n.set(\color, 0.9);
 n.set(\gate, 0);
 n.free;
+
+
+
+
+//For pads, model 31, timbre 1, modulate colour from 0-1 slowly for harmnoic series with overblown kind of sound
+
+
+
+
 /////////////////////////////////////////////
 
 // Main block does all the things.
@@ -196,8 +205,7 @@ n.free;
 	//Take note, make synth, chuck in array on state == 1, gate off on state == 0;
 	switch(state)
 	{1} {	~synthGridArray.put(index, Synth(\tone,
-		[pitch: note, color:0.2, timb:0.9] ));
-	}
+		[pitch: note, color:0.2, timb:0.9] ));}
 	{0} { ~synthGridArray.at(index).set(\gate, 0); }
 };
 
@@ -335,11 +343,11 @@ n.free;
 
 
 
-/////////////////////
-// Toggle Pages Sequencer
+////////////////////////////
+// Toggle Pages Sequencer //
 // Task for running through togglePages via ~topButtonAction.... not ideal, but works?
 ~toggleSeq = Task({
-	var interval = 0.10; // here is tempo...
+	var interval = 0.75; // here is tempo...
 	loop {
 		~playPosition = (~playPosition + 1).wrap(0,63);
 		~topButtonAction.(~sequencerArray[~playPosition]);
@@ -348,7 +356,7 @@ n.free;
 	}
 });
 
-// Button action
+// H Button action
 ~playToggleSeq = {
 	if(~playState==0) { ~toggleSeq.play; ~playState = 1;} { ~toggleSeq.stop; ~playState = 0;};
 };
@@ -476,10 +484,14 @@ n.free;
 // Now it should all work! /
 ////////////////////////////
 
-// main Pad modes.
-~padSetAction.("momentary"); // does nothing but light up and turn off when pressed and released. woooooooohooooo
-~padSetAction.("keyboard");
-~padSetAction.("toggle");
+
+
+///Recording sweet jams.
+~playPosition=0
+s.makeWindow;
+Platform.recordingsDir
+
+
 
 
 //////////////////////////////
@@ -589,3 +601,43 @@ m.elAt(\pad).do(_.value_(0));
  m.postElements
 // // top left pad == k.elAt(\pad, 0, 0);
 
+/////////////////////////////////////////////
+// ndef messing for sounddesign... not quite for this, need to learn more.
+/*(
+Ndef(\keyboard, {| pitch=60, timbre= 0.5, color = 0.5, model = 29 |
+	var sig;
+	var vib = SinOsc.kr(0.1).bipolar(1);
+	var env = EnvGen.kr(
+		Env(
+			[0, 1, 1, 0],
+			[0, 0.8, 2],
+			[-2, -4, -4],
+			2
+		),
+		\gate.kr(1),
+		doneAction: 2
+	);
+	sig = MiBraids.ar(pitch, timbre, color, model, mul: 0.4) ! 2;
+	sig = sig * env;
+});
+)
+s.reboot
+Ndef(\keyboard).addSpec(\pitch, [30,70,\lin, 1.0]);
+Ndef(\keyboard).addSpec(\timbre, [0.0,1.0,\lin, 0.0]);
+Ndef(\keyboard).addSpec(\color, [0.0,1.0,\lin, 0.0]);
+Ndef(\keyboard).addSpec(\model, [0,47,\lin, 1.0]);
+
+Ndef(\keyboard).play;
+Ndef(\keyboard).stop;
+Ndef(\keyboard).gui
+
+//////// Polyphony refactor for next iteration... but nah...
+g=NPVoicer(Ndef(\polyKeyboard));
+g.prime(\tone);
+g.play
+g.put(48,[\pitch,60]);
+g.release(48,2); //second arg is release time, as gate doesn't really work...
+g.put(49,[\pitch,63]);
+
+g.release(49,2);
+g.prime(\toggleSynth);*/
