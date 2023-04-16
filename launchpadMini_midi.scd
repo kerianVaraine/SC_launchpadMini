@@ -2,7 +2,7 @@
 // Install Dependencies:
 // Modaility toolkit for mapping controller
 // Quarks.install("Modality-toolkit");
-
+////
 // Mutable Instruments UGens for basic sound design, follow install instructions:
 // https://github.com/v7b1/mi-UGens
 
@@ -34,26 +34,31 @@ m = MKtl('LPmini', "novation-launchpadMini");
 ~keyboardNoteArray = Array.fill(64, 0);
 ~defineKeyboardNoteArray = {
 	// midi note scale generation for pads...
-	// take first note of top row(67 here), 35 notes below that is bottom left pad midinote(32 here).
+	// take first note of top row(77 here), 35 notes below that is bottom left pad midinote(32 here).
 	// makes standard isomorphic wiki hayden layout for square pads, so not wiki-hayden layout at all.
 	// major seconds across, 4ths above.
-	var note, index;
+	arg bottomLeftPadNote;
+	var note, index,topLeftPadNote = bottomLeftPadNote + 35;
 	(7..0).do{|y|
 		8.do{|x|
 			index = x + (y*8);
-			note = 77 + (x*2) - (y*5);
+			note = topLeftPadNote + (x*2) - (y*5);
 			~keyboardNoteArray.put(index, note);
 			// [x,y, index, note].postln;
 		};
 	};
 };
-~defineKeyboardNoteArray.value;
+~defineKeyboardNoteArray.(40).value;
 
 //Make array for synth voices, 64 for now, as not messing with octave changes just yet;
 ~synthGridArray = nil ! 64;
 
 // do the same for toggleSynthGridArray to hold toggled synths and not get in the way of keyboard mode.
 ~toggleSynthGridArray = nil !64;
+
+// Keyboard mode recording Sequencer array
+~sequenceSynthGridArray = nil ! 64;
+
 
 //Toggle Sequencer vars
 ~playPosition = 0;
@@ -70,11 +75,14 @@ m = MKtl('LPmini', "novation-launchpadMini");
 
 
 // Second block initialise a verrrrrry simple synth to start with...
+// swapped synths - 14-04-22
 (
 s.waitForBoot;
 
-SynthDef.new(\tone,{var sig;
+// bowed lead. doesn't go well with wobbley tubes.
+SynthDef.new(\toggleSynth,{var sig;
 	var vib = SinOsc.kr(0.1).bipolar(1);
+		var color = SinOsc.kr(LFNoise1.kr(5,2,0)).unipolar(1);
 	var env = EnvGen.kr(
 		Env(
 			[0, 1, 1, 0],
@@ -85,13 +93,15 @@ SynthDef.new(\tone,{var sig;
 		\gate.kr(1),
 		doneAction: 2
 	);
-	sig = MiBraids.ar(\pitch.kr(60), \timb.kr(0.5), \color.kr(0.1), 29, mul: 0.4) ! 2;
+	var timbreEnv = EnvGen.kr(Env([0,1,0.3],[0,0.3,4],'exp'));
+	sig = MiBraids.ar(\pitch.kr(60), timbreEnv, color, 29, mul: 0.1) ! 2;
 	sig = sig * env;
 	Out.ar(\out.kr(0), sig);
 }).add;
 
 
-SynthDef.new(\toggleSynth,{
+/// Wobbley overblown tubes
+SynthDef.new(\tone,{
 	var sig;
 	var pitch=60;
 	var bpm = 30/60;
@@ -109,13 +119,11 @@ SynthDef.new(\toggleSynth,{
 		\gate.kr(1),
 		doneAction: 2
 	);
-	sig = MiBraids.ar(\pitch.kr(60) + vib, timb, color, model:31, mul: 0.2);
+	sig = MiBraids.ar(\pitch.kr(60) + vib, timb, color, model:31, mul: 0.1);
 	sig = sig * env;
 		Out.ar(\out.kr(0), Pan2.ar(sig, panVal));
 }).add;
-
 )
-Pan2
 
 /////////////////////////////////////////////
 //test simple synths.
@@ -127,7 +135,6 @@ n.set(\timb, 0.9)
 n.set(\color, 0.9);
 n.set(\gate, 0);
 n.free;
-
 
 
 
@@ -198,15 +205,20 @@ n.free;
 
 /////////////////////////////////
 /////// Keyboard Mode Functions
-~padKeyboardNote = {
+
+~padKeyboardNote= {
 	arg index, state;
-	// [~keyboardNoteArray[index], index%8, index.div(8), state].postln;
+//	[~keyboardNoteArray[index], index%8, index.div(8), state].postln;
 	var note = ~keyboardNoteArray[index];
 	//Take note, make synth, chuck in array on state == 1, gate off on state == 0;
 	switch(state)
 	{1} {	~synthGridArray.put(index, Synth(\tone,
-		[pitch: note, color:0.2, timb:0.9] ));}
-	{0} { ~synthGridArray.at(index).set(\gate, 0); }
+		[pitch: note] ));}
+	{0} { ~synthGridArray.at(index).set(\gate, 0); };
+
+	if(~keySeqRecording == true){
+		~keyRecordNoteEvents.(index,state);
+	};
 };
 
 //////// Toggle Mode Functions Section
@@ -347,7 +359,7 @@ n.free;
 // Toggle Pages Sequencer //
 // Task for running through togglePages via ~topButtonAction.... not ideal, but works?
 ~toggleSeq = Task({
-	var interval = 0.75; // here is tempo...
+	var interval = 0.22; // here is tempo...
 	loop {
 		~playPosition = (~playPosition + 1).wrap(0,63);
 		~topButtonAction.(~sequencerArray[~playPosition]);
@@ -466,6 +478,10 @@ n.free;
 		//Play Action on H Button:
 		m.elAt(\side, 7,\on).addAction( {~playToggleSeq.value});
 
+		//G start recording, only works first time, just wanted to play...
+		m.elAt(\side,6, \on).resetAction;
+		m.elAt(\side,6, \on).addAction( { ~recordKeyboardButton.value });
+
 		~padMode.postln;
 })};
 
@@ -478,6 +494,7 @@ n.free;
 ~topSetAction.("toggle");
 ~padMode = "keyboard";
 ~sideSetAction.value;
+
 )
 
 ////////////////////////////
@@ -492,32 +509,128 @@ s.makeWindow;
 Platform.recordingsDir
 
 
+///////////
+// Keyboard Transposition, define bottom left pad value
+~defineKeyboardNoteArray.(46).value;
+
+
+
+/////////////////////////////////////////
+// Keyboard Sequencer recording mode??
+// Records keyboard notes can play them back in their own array of synths.
+/////////
+// Testing array of keyOn/Off events, see if I can record an array of them and paly them back...
+// Has to be a function call...
+
+(
+
+		//init vars
+		~keySeqRecording = false; // true for recording mode...
+		~keyTestArray = nil!100; // read at control rate?
+		~keyRecordArray = List.new;
+		~keyTestArrayPos = 0; //playhead
+
+		// sequencer specific synth creation using array defined in header code.
+		~keyPlaySeq = Task({
+			var interval = 0.1; // here is tempo...
+			loop {
+				~keyTestArrayPos.postln;
+				~keyTestArray[~keyTestArrayPos].postln;
+				if (~keyTestArray[~keyTestArrayPos] != nil) {
+					// works for monophonic
+					// ~padKeyboardNote.(~keyTestArray[~keyTestArrayPos][0], ~keyTestArray[~keyTestArrayPos][1]);
+					//testing for nested arrays of note events
+					~keyTestArray[~keyTestArrayPos].do({ arg item ;
+						~keySeqPlayNotes.(item[0], item[1]);
+					});
+				};
+				~keyTestArrayPos = (~keyTestArrayPos + 1).wrap(0,~keyTestArray.size);
+				interval.wait;
+			}
+		});
+
+
+		// Recording into list, creates a nil input to keep time.
+		~keyRecordSeq = Task({
+			var interval = 0.1; // here is tempo...
+			loop {
+				~keyTestArrayPos.postln;
+				~keyRecordArray.add(nil);
+				~keyTestArrayPos = (~keyTestArrayPos + 1);
+				interval.wait;
+		}};
+		);
+
+		// called from PadKeyboardNote if record mode true
+		~keyRecordNoteEvents = {
+			arg index,state;
+			if(~keyRecordArray[~keyTestArrayPos-1].size == 0){
+				~keyRecordArray.put(~keyTestArrayPos-1, [[index, state]] );
+			} {
+				~keyRecordArray[~keyTestArrayPos-1].add( [index, state] );
+			}
+		};
+
+
+		// playback opf recorded sequence, makes new synths per note.
+		~keySeqPlayNotes = {
+			arg index, state;
+			//	[~keyboardNoteArray[index], index%8, index.div(8), state].postln;
+			var note = ~keyboardNoteArray[index];
+			//Take note, make synth, chuck in array on state == 1, gate off on state == 0;
+			switch(state)
+			{1} {	~sequenceSynthGridArray.put(index, Synth(\tone,
+				[pitch: note] ));}
+			{0} { ~sequenceSynthGridArray.at(index).set(\gate, 0); };
+
+			if(~keySeqRecording == true){
+				~keyRecordNoteEvents.(index,state);
+			};
+		};
+
+
+
+
+		// Controls for sequencer
+		/////
+		//Recording
+// ADD start on input would be nice.
+		~recordKeyboardButton = {
+			if( ~keySeqRecording == false) {
+		"startingRecording".postln;
+				// clear and reset arrayList
+				~keyRecordArray.clear; ~keyTestArrayPos = 0;
+				// Set recording on and start recordin keypresses
+				~keySeqRecording = true; ~keyRecordSeq.play;
+			}{
+				"stoppingRecording".postln;
+				// stop recording and set recording to false
+				~keyRecordSeq.stop; ~keySeqRecording = false;
+				// push list to key recorded arrary
+				~keyTestArray = ~keyRecordArray.asArray;
+		//then play automagically
+		    ~keyTestArrayPos = 0;~keyPlaySeq.play;
+
+			};
+		};
+
+	)		/////////////
+
+
+	// Playback
+// play and stop recorded array
+~keyTestArrayPos = 0;~keyPlaySeq.play;
+~keyPlaySeq.stop;~keyTestArrayPos = 0;
+
+
+
+
+
 
 
 //////////////////////////////
 // random debugs section.... /
 //////////////////////////////
-
-
-//sequencer messing
-
-//in sequencer mode
-~sequencerArray;
-
-
-
-/*
-~togglePad = {
-	arg x, y;
-	var index = x + (y * 8), state;
-	{if(~currentTogglePage != 8)
-		{ if( ~toggleGridArray[~currentTogglePage][index] != 0) {state = 0} {state = 1};
-			~toggleGridArray[~currentTogglePage].put(index, state);
-			m.elAt( \pad, y,x, \on ).do(_.value_(state*(2/127)));
-		};
-	};
-};*/
-
 
 
 
